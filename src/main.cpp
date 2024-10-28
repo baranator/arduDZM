@@ -8,8 +8,9 @@
 #define DEBUG
 #define RPM_MAX 8000
 #define RPM_CRIT 6000
+#define RPM_MIN 200
 #define WELCOME_MSG "Hidiho!"
-
+#define DSP_REFRESH_MS 100
 
 
 
@@ -27,9 +28,11 @@ uint16_t adcMin=1023;
 //low voltage count to detect spark safely
 const uint8_t lvths=5;
 uint8_t lvcount=0;
+#define EMA_ALPHA 0.3
 
 unsigned long lastSpark=0;
-
+uint16_t rpm_EMA=0;
+unsigned long lastDisplayRefresh=0;
 
 void oledSetup(){
   TinyWireM.begin();
@@ -115,8 +118,9 @@ void updateMinMax(){
   }
 }
 
-void oledShow(){
+void oledRefresh(){
   oled.clear();
+  oledShowRPM(rpm_EMA);
   #ifdef DEBUG
     oledDebugLine();
   #endif
@@ -140,33 +144,46 @@ void loop() {
   updateMinMax();
   
   if(adcMax>adcMin){
-    uint8_t val=analogRead(ADC_PIN);
-    if(val < adcMax-0.2*(adcMax-adcMin)){
-      lvcount++;
-    }else{
-      lvcount--;
-    }
-    if(lvcount<0){
-      lvcount=0;
-    }
-    if(lvcount>=lvths){
-      unsigned long currentSpark=micros();
-      unsigned long periodLength;
-      //handle overflow after ~70min
-      if(lastSpark>currentSpark){
-        periodLength=currentSpark;
-      }else{
-        periodLength=currentSpark-lastSpark;
-      }
-      lastSpark=currentSpark;
-
-      //store in period array, check if 5 periods summed up, if so, calc arith. mean, then reset array/conzter
-
-
-      lvcount=0;
-    }
+    //if range was not initialized
+    return;
+  }
+  //only detect a new spark if the last one is at least half of the shortest period of highest rpm ago
+  if(micros()-lastSpark < (1.0/(RPM_MAX/60.0))*1000*1000/2){
+    return;
   }
 
+  uint8_t val=analogRead(ADC_PIN);
+  if(val < adcMax-0.2*(adcMax-adcMin)){
+    lvcount++;
+  }else{
+    lvcount--;
+  }
+  if(lvcount<0){
+    lvcount=0;
+  }
+  if(lvcount>=lvths){
+    //spark detected, calc momentary rpm
+    unsigned long currentSpark=micros();
+    unsigned long periodLength=currentSpark-lastSpark;
+    lastSpark=currentSpark;
+    lvcount=0;
+
+    //flatten by exponential moving average (EMA)
+    uint16_t rpm=60*1.0/(periodLength/(1000*1000));
+    rpm_EMA= EMA_ALPHA * rpm + (1-EMA_ALPHA)*rpm_EMA;
+    
+  }
+
+  //if there was not spark detected for a timeperiod that implicates less than RPM_MIN rpm, assume motor is off/at zero rpm
+  if(micros()-lastSpark >  (1.0/(RPM_MIN*60))*1000*1000){
+    rpm_EMA=0;
+  }
+
+  unsigned long now=millis();
+  if(now-lastDisplayRefresh>DSP_REFRESH_MS){
+    oledRefresh();
+    lastDisplayRefresh=now;
+  }
 
 
   // // put your main code here, to run repeatedly:
