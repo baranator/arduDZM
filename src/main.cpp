@@ -1,8 +1,6 @@
 #include <Arduino.h>
-#include <Servo.h>
-#include <TinyWireM.h>
-#include <Tiny4kOLED.h>
-#include "m38_font.h"
+
+
 
 
 #define DEBUG
@@ -11,14 +9,26 @@
 #define RPM_MIN 200
 #define WELCOME_MSG "Hidiho!"
 #define DSP_REFRESH_MS 100
+#define OLED_DISPLAY
+#undef SERVO_DISPLAY
 
 
+#ifdef SERVO_DISPLAY
+  #include <Servo.h>
+#endif
+#ifdef OLED_DISPLAY
+  #include <TinyWireM.h>
+  #include <Tiny4kOLED.h>
+  #include "m38_font.h"
+#endif
 
 
+#ifdef SERVO_DISPLAY
+  #ifdef OLED_DISPLAY
+    #error Choose either OLED or SERVO, not both!
+  #endif
+#endif
 
-//const DCfont *oledFont = FONTM38;
-
-//Servo myservo;  // create Servo object to control a servo
 
 const uint8_t oledWidth = 128;
 const uint8_t oledHeight = 64;
@@ -34,15 +44,16 @@ unsigned long lastSpark=0;
 uint16_t rpm_EMA=0;
 unsigned long lastDisplayRefresh=0;
 
+
+#ifdef OLED_DISPLAY
 void oledSetup(){
   TinyWireM.begin();
   oled.begin(oledWidth, oledHeight, sizeof(tiny4koled_init_128x64br), tiny4koled_init_128x64br);
   oled.clear();
   oled.setFont(FONT6X8);
   oled.on();
-  oled.setCursor(30, 4); // x: pixel / y: line
-  oled.print("Hello world");
-
+    oled.setCursor(30, 4); // x: pixel / y: line
+  oled.print(WELCOME_MSG);
 }
 
 void drawBar(uint16_t rpm){
@@ -73,7 +84,7 @@ void drawBar(uint16_t rpm){
           f=f^0b00011000;
           e=e^0b00011000;
       }
-      for(int i=0;i<segw-1;i++){
+      for(uint16_t i=0;i<segw-1;i++){
         oled.sendData(f);
       }
       //tick
@@ -108,6 +119,27 @@ void oledDebugLine(){
   oled.print(d.c_str());
 }
 
+void oledRefresh(){
+  oled.clear();
+  oledShowRPM(rpm_EMA);
+  #ifdef DEBUG
+    oledDebugLine();
+  #endif
+}
+#endif
+
+#ifdef SERVO_DISPLAY
+
+Servo myservo;  // create Servo object to control a servo
+
+void servoSetup(){
+  pinMode(PB3, OUTPUT);
+  myservo.attach(PB4);
+}
+
+#endif
+
+
 void updateMinMax(){
   uint16_t val=analogRead(ADC_PIN);
   if(val>adcMax){
@@ -118,24 +150,20 @@ void updateMinMax(){
   }
 }
 
-void oledRefresh(){
-  oled.clear();
-  oledShowRPM(rpm_EMA);
-  #ifdef DEBUG
-    oledDebugLine();
-  #endif
 
-
-}
 
 void setup() {
   //Serial.begin(9600);
   // initialize digital pin LED_BUILTIN as an output.
-  //pinMode(PB3, OUTPUT);
-  //myservo.attach(PB4);
+
+  #ifdef OLED_DISPLAY
   oledSetup();
-  oled.setCursor(30, 4); // x: pixel / y: line
-  oled.print(WELCOME_MSG);
+  #endif
+
+  #ifdef SERVO_DISPLAY
+  servoSetup();
+  #endif
+
 
   lastSpark=micros();
 }
@@ -148,7 +176,7 @@ void loop() {
     return;
   }
   //only detect a new spark if the last one is at least half of the shortest period of highest rpm ago
-  if(micros()-lastSpark < (1.0/(RPM_MAX/60.0))*1000*1000/2){
+  if(micros()-lastSpark < (1.0/RPM_MAX)*60*1000*1000/2){
     return;
   }
 
@@ -169,7 +197,7 @@ void loop() {
     lvcount=0;
 
     //flatten by exponential moving average (EMA)
-    uint16_t rpm=60*1.0/(periodLength/(1000*1000));
+    uint16_t rpm=60*1.0*1000*1000/(periodLength);
     rpm_EMA= EMA_ALPHA * rpm + (1-EMA_ALPHA)*rpm_EMA;
     
   }
@@ -181,7 +209,10 @@ void loop() {
 
   unsigned long now=millis();
   if(now-lastDisplayRefresh>DSP_REFRESH_MS){
-    oledRefresh();
+    #ifdef OLED_DISPLAY
+      oledRefresh();
+    #endif
+    
     lastDisplayRefresh=now;
   }
 
