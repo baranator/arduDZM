@@ -22,7 +22,8 @@
 
 const uint8_t oledWidth = 128;
 const uint8_t oledHeight = 64;
-#define ADC_PIN 5
+#define SPARK_ADC_PIN 5
+#define BAT_U_ADC_PIN 4
 uint16_t adcMax=0;
 uint16_t adcMin=1023;
 //low voltage count to detect spark safely
@@ -33,6 +34,8 @@ uint8_t lvcount=0;
 unsigned long lastSpark=0;
 uint16_t rpm_EMA=0;
 unsigned long lastDisplayRefresh=0;
+unsigned long lastVoltage=0;
+uint16_t batVoltage=0;
 
 void oledSetup(){
   TinyWireM.begin();
@@ -41,7 +44,7 @@ void oledSetup(){
   oled.setFont(FONT6X8);
   oled.on();
   oled.setCursor(30, 4); // x: pixel / y: line
-  oled.print("Hello world");
+  oled.print(WELCOME_MSG);
 
 }
 
@@ -69,7 +72,7 @@ void drawBar(uint16_t rpm){
         e=0b11111111;
       }
       //mark critical rpms
-      if(x>RPM_CRIT/1000){
+      if(x>=RPM_CRIT/1000){
           f=f^0b00011000;
           e=e^0b00011000;
       }
@@ -108,8 +111,7 @@ void oledDebugLine(){
   oled.print(d.c_str());
 }
 
-void updateMinMax(){
-  uint16_t val=analogRead(ADC_PIN);
+void updateMinMax(uint16_t val){
   if(val>adcMax){
     adcMax=val;
   }
@@ -133,27 +135,35 @@ void setup() {
   // initialize digital pin LED_BUILTIN as an output.
   //pinMode(PB3, OUTPUT);
   //myservo.attach(PB4);
+  pinMode(SPARK_ADC_PIN,INPUT);
+  pinMode(BAT_U_ADC_PIN,INPUT);
   oledSetup();
-  oled.setCursor(30, 4); // x: pixel / y: line
-  oled.print(WELCOME_MSG);
+
 
   lastSpark=micros();
 }
 
 void loop() {
-  updateMinMax();
-  
+  uint16_t sparkVal=analogRead(SPARK_ADC_PIN);
+  updateMinMax(sparkVal);
+  unsigned long now=millis();
+
+  if(now-lastVoltage>>DSP_REFRESH_MS){
+    batVoltage=analogRead(BAT_U_ADC_PIN);
+    lastVoltage=now;
+  }
+
   if(adcMax>adcMin){
     //if range was not initialized
-    return;
+    //return;
   }
   //only detect a new spark if the last one is at least half of the shortest period of highest rpm ago
   if(micros()-lastSpark < (1.0/(RPM_MAX/60.0))*1000*1000/2){
     return;
   }
 
-  uint8_t val=analogRead(ADC_PIN);
-  if(val < adcMax-0.2*(adcMax-adcMin)){
+  
+  if(sparkVal < adcMax-0.2*(adcMax-adcMin)){
     lvcount++;
   }else{
     lvcount--;
@@ -179,7 +189,7 @@ void loop() {
     rpm_EMA=0;
   }
 
-  unsigned long now=millis();
+  
   if(now-lastDisplayRefresh>DSP_REFRESH_MS){
     oledRefresh();
     lastDisplayRefresh=now;
